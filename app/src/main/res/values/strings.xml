@@ -1,0 +1,5 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">Secmail Assistant</string>
+    <string name="accessibility_desc">Secmail 화면에 접근성으로 노출되는 메일 텍스트를 로컬에서 읽고 구조화하는 서비스입니다. 메일 원문은 로컬에서 처리하며, 선택적 자동 번역은 기기 내 ML Kit 모델로 수행합니다.</string>
+</resources>
