@@ -1,0 +1,112 @@
+name: Build Secmail Reply Assistant v0.8.1 Slim
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [ main ]
+    paths:
+      - '1_Secmail_v08_source.zip'
+      - '.github/workflows/build-v081-slim.yml'
+
+jobs:
+  build:
+    runs-on: ubuntu-24.04
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up JDK 17
+        uses: actions/setup-java@v5
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      - name: Configure Android SDK
+        shell: bash
+        run: |
+          set -euo pipefail
+          ANDROID_HOME="${ANDROID_HOME:-/usr/local/lib/android/sdk}"
+          echo "ANDROID_HOME=$ANDROID_HOME" >> "$GITHUB_ENV"
+          echo "ANDROID_SDK_ROOT=$ANDROID_HOME" >> "$GITHUB_ENV"
+          SDKMANAGER="$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager"
+          if [ ! -x "$SDKMANAGER" ]; then SDKMANAGER="$(command -v sdkmanager)"; fi
+          yes | "$SDKMANAGER" --licenses >/dev/null || true
+          "$SDKMANAGER" "platform-tools" "platforms;android-35" "build-tools;35.0.0"
+
+      - name: Set up Gradle
+        uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: '8.9'
+
+      - name: Extract source
+        shell: bash
+        run: |
+          set -euo pipefail
+          rm -rf Secmail_Assistant_v0.8_Lite
+          unzip -q 1_Secmail_v08_source.zip
+          test -f Secmail_Assistant_v0.8_Lite/settings.gradle
+          test -f Secmail_Assistant_v0.8_Lite/app/build.gradle
+
+      - name: Convert source to v0.8.1 Slim
+        shell: bash
+        run: |
+          set -euo pipefail
+          ROOT="Secmail_Assistant_v0.8_Lite"
+
+          sed -i 's/versionCode 10/versionCode 11/' "$ROOT/app/build.gradle"
+          sed -i 's/versionName "0.8.0"/versionName "0.8.1"/' "$ROOT/app/build.gradle"
+          sed -i '/com.google.mlkit:language-id/d' "$ROOT/app/build.gradle"
+          sed -i '/com.google.mlkit:translate/d' "$ROOT/app/build.gradle"
+
+          perl -0pi -e 's/\n\s*if \(prefs\(\)\.getBoolean\(TranslationHelper\.PREF_AUTO_TRANSLATE, true\) && sr\.id > 0\) \{\n\s*String latest = ImportantInfoExtractor\.latestMessageBody\(mail\.body\);\n\s*TranslationHelper\.translateAndStore\(this, sr\.id, latest, null\);\n\s*\}\n/\n/s' \
+            "$ROOT/app/src/main/java/com/mintomax/secmailprobe/ProbeAccessibilityService.java"
+
+          rm -f "$ROOT/app/src/main/java/com/mintomax/secmailprobe/TranslationHelper.java"
+
+          sed -i '/Used only for optional ML Kit model download/d' "$ROOT/app/src/main/AndroidManifest.xml"
+          sed -i '/android.permission.INTERNET/d' "$ROOT/app/src/main/AndroidManifest.xml"
+
+          ! grep -R "com.google.mlkit" "$ROOT/app"
+          ! grep -R "TranslationHelper" "$ROOT/app"
+          grep -q 'versionCode 11' "$ROOT/app/build.gradle"
+          grep -q 'versionName "0.8.1"' "$ROOT/app/build.gradle"
+
+      - name: Build debug APK
+        working-directory: Secmail_Assistant_v0.8_Lite
+        run: gradle :app:assembleDebug --stacktrace
+
+      - name: Verify and package APK
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p out
+          SRC="Secmail_Assistant_v0.8_Lite/app/build/outputs/apk/debug/app-debug.apk"
+          test -f "$SRC"
+          OUT="out/Secmail_Reply_Assistant_v0.8.1_Slim.apk"
+          cp "$SRC" "$OUT"
+
+          "$ANDROID_HOME/build-tools/35.0.0/aapt" dump badging "$OUT" | tee out/APK_BADGING.txt
+          grep -q "package: name='com.mintomax.secmailprobe'" out/APK_BADGING.txt
+          grep -q "versionCode='11'" out/APK_BADGING.txt
+          grep -q "versionName='0.8.1'" out/APK_BADGING.txt
+
+          if unzip -l "$OUT" | grep -qi "libtranslate_jni"; then
+            echo "ERROR: ML Kit translate native library still present"
+            exit 1
+          fi
+
+          sha256sum "$OUT" | tee out/SHA256.txt
+          stat -c '%s' "$OUT" | tee out/APK_SIZE_BYTES.txt
+
+      - name: Upload APK
+        uses: actions/upload-artifact@v4
+        with:
+          name: Secmail_Reply_Assistant_v0.8.1_Slim_APK
+          path: |
+            out/Secmail_Reply_Assistant_v0.8.1_Slim.apk
+            out/APK_BADGING.txt
+            out/SHA256.txt
+            out/APK_SIZE_BYTES.txt
+          if-no-files-found: error
+          retention-days: 14
